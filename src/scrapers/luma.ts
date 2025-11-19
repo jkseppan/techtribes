@@ -1,6 +1,77 @@
 import { loadHtml, formatDate } from "../utils.ts";
 
+async function getUserEvents(url: URL) {
+  const username = url.pathname.split("/").pop();
+  if (!username) return { event: null };
+
+  try {
+    const profileResponse = await fetch(
+      `https://api2.luma.com/user/profile?username=${username}`
+    );
+    if (!profileResponse.ok) return { event: null };
+
+    const profileData = await profileResponse.json();
+    const userApiId = profileData.user?.api_id;
+
+    if (!userApiId) return { event: null };
+
+    const eventsResponse = await fetch(
+      `https://api2.luma.com/user/profile/events-hosting?pagination_limit=10&period=future&user_api_id=${userApiId}`
+    );
+
+    if (!eventsResponse.ok) return { event: null };
+
+    const eventsData = await eventsResponse.json();
+
+    if (!eventsData.entries || !Array.isArray(eventsData.entries) || eventsData.entries.length === 0) {
+      return { event: null };
+    }
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    const allEvents = eventsData.entries
+      .map((entry: any) => {
+        const event = entry.event;
+        if (!event || !event.start_at || !event.url) return null;
+
+        const eventDate = new Date(event.start_at);
+        if (isNaN(eventDate.getTime())) return null;
+
+        const formattedDate = formatDate(eventDate);
+        const normalizedDate = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+
+        return {
+          formattedDate,
+          eventDate: normalizedDate,
+          link: `https://lu.ma/${event.url}`,
+          distance: Math.abs(normalizedDate.getTime() - now.getTime()),
+        };
+      })
+      .filter((event: any): event is NonNullable<typeof event> => event !== null);
+
+    if (allEvents.length === 0) return { event: null };
+
+    allEvents.sort((a: any, b: any) => a.distance - b.distance);
+    const latestEvent = allEvents[0]!;
+
+    return {
+      event: {
+        date: latestEvent.formattedDate,
+        link: latestEvent.link,
+      },
+    };
+  } catch {
+    return { event: null };
+  }
+}
+
 export default async function scrape(events: string | URL | Request) {
+  const url = new URL(events.toString());
+  if (url.pathname.startsWith("/user/")) {
+    return getUserEvents(url);
+  }
+
   const $ = await loadHtml(events);
 
   const content = $("script#__NEXT_DATA__").html();
