@@ -1,3 +1,5 @@
+import { isJsonFeed, parseJsonFeed } from "./jsonfeed.ts";
+
 export default async function scrapeUrl(events: string | URL | Request) {
   try {
     const response = await fetch(events);
@@ -10,7 +12,8 @@ export default async function scrapeUrl(events: string | URL | Request) {
     const contentType = response.headers.get("content-type");
     const isJsonResponse =
       contentType?.includes("application/json") ||
-      contentType?.includes("text/plain");
+      contentType?.includes("text/plain") ||
+      contentType?.includes("application/feed+json");
 
     if (!isJsonResponse) {
       console.warn(`Expected JSON or text but got ${contentType}: ${events}`);
@@ -18,6 +21,9 @@ export default async function scrapeUrl(events: string | URL | Request) {
     }
 
     const data = await response.json();
+
+    if (isJsonFeed(data)) return parseJsonFeed(data);
+
     const event = data.event;
 
     return {

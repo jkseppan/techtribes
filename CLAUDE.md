@@ -63,6 +63,7 @@ The scraping system (`src/scrape.ts`) supports multiple event platforms:
 - **Meetabit.com**: `src/scrapers/meetabit.ts`
 - **Luma.ma**: `src/scrapers/luma.ts`
 - **JSON endpoints**: `src/scrapers/json.ts`
+- **JSON Feed**: `src/scrapers/jsonfeed.ts`
 
 Each scraper extracts:
 
