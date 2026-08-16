@@ -257,7 +257,9 @@
     - Python
     - Data Science
     - AI
-  events: https://www.meetup.com/pydatahelsinki/
+  events: https://pydata-helsinki.fi/events/
+  url: https://pydata-helsinki.fi/events.json
+  site: https://pydata-helsinki.fi/
   logo: pydata.png
 - name: PyLadies Tampere
   location: Tampere, Finland
