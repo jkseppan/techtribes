@@ -897,3 +897,96 @@ VITE_SITE_URL=http://localhost:3000
 NODE_ENV=production
 VITE_SITE_URL=https://techtribes.fi
 ```
+## Implementation notes and deviations (August 2026)
+
+The rewrite was implemented in `remix/` on 2026-08-15. This section records where the
+implementation deliberately departs from the plan above, and why. Where the plan and reality
+conflicted, the working, currently-supported tooling won.
+
+### Framework and tooling
+
+| Plan said | Implemented | Why |
+|---|---|---|
+| "Remix v2 with Vite (React Router v7)", `@remix-run/dev`, `@remix-run/node`, `json()`, `remix.config.js`, `vite-plugin-remix`, `@remix-run/static-adapter`, `remix-serve` for "build:static" | **React Router v8 framework mode** (`@react-router/dev`, `react-router`) with `ssr: false` + `prerender` in `react-router.config.ts` | Remix v2's APIs were folded into React Router v7 and are now at v8; the packages named in the plan are either deprecated or don't exist. RR's built-in `prerender` writes every route to `build/client/**/index.html` at build time, so no adapter or runtime server is needed. `react-router-dom` no longer exists in v8. |
+| `npm install tailark`, `tailark.config.js`, `@import "tailark/base"` | shadcn/ui (v4 CLI, `radix-nova` preset) on Tailwind v4 with the same "Tailark look" (`bg-foreground/5 ring-1 ring-foreground/5` cards, pill tags) hand-written in the components | Tailark is a collection of copy-in shadcn blocks, not an npm package with a config file. The visual style the Jekyll site already used *is* Tailark-style, so it was carried over directly. |
+| `@tailwind base/components/utilities` + HSL variables | Tailwind v4 (`@import "tailwindcss"`, `@theme inline`, oklch tokens) via `@tailwindcss/vite` | Tailwind v4 is what shadcn v4 targets; the `@tailwind` directives are v3 syntax. Brand primary is `#5b6cf6` (indigo, the colour of the existing "Add a community" button and the plan's Tailark token) rather than the `#206bc4` in the old `theme-color` meta or the violet in `src/input.css`, which the site never actually used consistently. |
+| Directory named `remix/` | Kept `remix/` | The plan and existing repo history use it; renaming would only add churn. |
+| Node 24 | Node ≥ 24.6 (root `engines`) | RR v8 needs ≥ 22.22 and React ≥ 19.2.7. |
+| Vite (unspecified) | Vite 8 | Current major; all plugins used declare support. |
+
+### Data pipeline
+
+| Plan said | Implemented | Why |
+|---|---|---|
+| Copy scrapers into `remix/app/lib/scrapers/` and `communities.yml` into `remix/data/` | **Nothing copied.** Scrapers, `data/communities.yml`, and the `add/sort/images/prune` tools stay in the repo root; `remix/app/lib/data.server.ts` reads `../data/output.json` at build time | One source of truth. Duplicating the data file and scrapers is exactly the kind of drift a rewrite should avoid. |
+| Convert scraper output "from YAML to JSON" | Scraper already writes both `site/_data/output.yml` and `data/output.json`; unchanged | Jekyll still needs the YAML while it is kept around. Drop the YAML when Jekyll is deleted (see TODO). |
+| Route loaders `json()` etc. | Plain object returns from `loader`s (single fetch), types via generated `+types` | v7+/v8 idiom. |
+| "Option: API route for on-demand scraping" | Not done | The site is fully static; there is no server to run it on. Scraping runs in CI before the build (daily + on push), same as before. |
+| "Last updated on" from build time | Uses `updated` timestamp from `data/output.json` (root loader → footer) | It is the actual scrape time; the previous SPA attempt showed the *viewer's* current date, which was wrong. |
+
+### Static assets and Jekyll coexistence
+
+The plan calls for keeping Jekyll runnable during the migration with a rollback path. So:
+
+- `site/`, `Gemfile`, `.ruby-version` are **kept untouched**. The Jekyll site still builds with the old commands.
+- Shared static assets (`site/assets/{logos,favicons,social}`, `site/favicon.ico`) remain where the
+  `add`/`images` tools write them and are copied into `remix/build/client/assets/...` (and served in dev) by
+  `vite-plugin-static-copy` in `remix/vite.config.ts`, so all public URLs (`/assets/logos/x.png`, `/feed.xml`,
+  `/guide`, `/404.html`) are identical to the Jekyll site.
+- The old, half-finished client-side SPA in `remix/` (fetching YAML in the browser, no SSG, workflow file in the
+  non-functional `remix/.github/` location with `cname: techtribes.fi` — the real domain is `www.techtrib.es`)
+  was replaced wholesale. It remains in git history.
+- The root GitHub Actions workflow now builds `remix/` and deploys `remix/build/client` with the same
+  `actions/deploy-pages` mechanism; the Ruby/Jekyll steps are gone. Rollback = `git revert`.
+- Follow-up (tracked in `TODO.md`): delete Jekyll, move assets into `remix/public/assets`, drop the YAML output.
+
+### Pages, features, and scope
+
+- **404**: React Router refuses to prerender non-200 responses, so the catch-all route renders the not-found
+  page with status 200 at `/404`; `scripts/postbuild.ts` copies `404/index.html` to `404.html` (what GitHub Pages
+  serves for unknown URLs) and writes `.nojekyll`.
+- **RSS feed**: a resource route (`app/routes/feed[.]xml.ts`) whose loader builds the XML in `app/lib/feed.ts`;
+  RR prerenders resource routes verbatim to `build/client/feed.xml`. Items gained a `<description>`.
+- **Guide**: markdown (`app/content/guide.md`, a copy of `site/guide.md`) rendered at build time with `marked`
+  in a loader — no MDX toolchain, no markdown library shipped to the browser.
+- **SEO/meta**: `app/lib/meta.ts#pageMeta()` reproduces the full head from `_layouts/default.html`
+  (title/description/canonical/OG/Twitter/JSON-LD/theme-color/RSS alternate) per route.
+- **navbar.js** was dead code (there is no mobile menu in `header.html`) and was not ported.
+  **tooltip.js** became a shadcn/Radix `Tooltip` on the Feed button.
+- **Dark mode**: implemented (plan checklist item) — `.dark` class, no-flash inline script, toggle in the header,
+  system preference by default.
+- **Search / tag filtering**: implemented as progressive enhancement on the home page (plan Phase 6). The
+  prerendered HTML contains every event; JS only filters client-side.
+- **Community submission form**: *not* implemented. A static site has nowhere to receive it; the "Add a community"
+  button keeps linking to the README instructions (PR-based flow), as before.
+- **Loading states / skeletons**: not applicable — there is no runtime data fetching.
+- **Analytics**: Simple Analytics snippet kept as-is in `root.tsx`.
+- **Environment variables** (`VITE_SITE_URL`): not used; the canonical URL is a constant in `app/lib/site.ts`
+  (`https://www.techtrib.es`, from `_config.yml`; the plan's `techtribes.fi` was wrong).
+- **Prettier**: added (`.prettierrc`); ESLint flat config kept.
+- **`theme-color`** meta is now the brand indigo (`#5b6cf6`) instead of the old, unrelated `#206bc4`.
+- **`site/assets/icons/*.svg`** are not copied into the new build; lucide-react replaced them. They stay in
+  `site/` for Jekyll.
+- **Home page `<h1>`**: the Jekyll page had none (started at `<h2>Upcoming events`); an `sr-only` `<h1>` with the
+  site title was added for assistive tech/crawlers. Visible markup is unchanged.
+
+### Verification performed
+
+- `npm run typecheck`, `npm run lint`, `npx prettier --check .`, `npm test` (78 Vitest tests: event/date helpers,
+  filtering, RSS builder, meta, `CommunityCard`, `EventList`), `npm run build` — all clean.
+- Built output inspected: 46 event cards prerendered, upcoming/past split matches `data/output.json` for the
+  build date in Europe/Helsinki, full `<head>` parity with `default.html`, guide identical to `site/guide.md`,
+  `feed.xml` valid RSS with 46 items, `404.html` present, all asset URLs unchanged.
+- Driven in headless Chromium against `vite preview` of `build/client`: no hydration or console errors, search and
+  tag filters work and sync to `?q=`/`?tags=`, deep links restore the filter, dark mode toggles and persists with no
+  flash on reload, Feed tooltip shows, client-side navigation to `/guide` works, mobile layout OK.
+
+### Known limitations / follow-ups
+
+- `remix/app/lib/data.server.ts` and `content.server.ts` memoise for the process lifetime; in `react-router dev`
+  a re-scrape or guide edit needs a dev-server restart. Irrelevant for CI builds.
+- Loaders resolve paths from `process.cwd()`; all `remix/` npm scripts (and CI via `working-directory: remix`)
+  run from that directory.
+- Removing Jekyll, moving assets into `remix/public/`, and dropping the YAML scraper output are tracked in `TODO.md`.
+- The `remix/` package name/directory could be renamed (e.g. `site/` after Jekyll is deleted); deferred to keep the
+  diff reviewable.
